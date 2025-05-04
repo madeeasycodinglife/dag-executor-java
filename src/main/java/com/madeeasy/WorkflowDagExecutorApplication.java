@@ -303,8 +303,19 @@ public class WorkflowDagExecutorApplication {
                     }
 
 
-                    executionOrder.add(node.name);
-                    completedNodes.add(node.id);
+                    try {
+
+                        if (!Thread.currentThread().isInterrupted()) {
+                            executionOrder.add(node.name);
+                            completedNodes.add(node.id);
+                        }
+                    } catch (Exception e) {
+                        System.err.printf("[%s] ❌ Node %s failed: %s%n",
+                                Thread.currentThread().getName(),
+                                node.name,
+                                e.getMessage());
+                        throw e; // Re-throw to trigger exceptionally
+                    }
 
                     // ✅ Completion log
                     if (enableLogging) {
@@ -351,6 +362,9 @@ public class WorkflowDagExecutorApplication {
                             Thread.currentThread().getName(),
                             node.name,
                             ex.getMessage());
+                    if (latchReleased.compareAndSet(false, true)) {
+                        completionLatch.countDown();
+                    }
                     return null;
                 });
 
