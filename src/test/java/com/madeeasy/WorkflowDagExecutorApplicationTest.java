@@ -9,10 +9,8 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.lang.reflect.Field;
-import java.time.Duration;
 import java.util.*;
 import java.util.concurrent.*;
-import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
@@ -252,44 +250,52 @@ class WorkflowDagExecutorApplicationTest {
 
     @Test
     void execute_WhenTaskThrowsException_ContinuesExecution() throws Exception {
-        // Create mock executor to simulate task execution
-        ExecutorService mockExecutor = mock(ExecutorService.class);
+        // Arrange
+        Map<Integer, String> nodes = Map.of(1, "Node-1", 2, "Node-2", 3, "Node-3");
+        List<int[]> edges = List.of(new int[]{1, 2}, new int[]{2, 3}); // Node-1 -> Node-2 -> Node-3
+        DagInput input = new DagInput(nodes, edges);
 
-        // Simulate execution: throw on Node-2, succeed otherwise
-        doAnswer(invocation -> {
-            Runnable task = invocation.getArgument(0);
-            if (task.toString().contains("Node-2")) {
-                throw new RuntimeException("Simulated failure");
-            }
-            task.run();
-            return null;
-        }).when(mockExecutor).execute(any(Runnable.class));
-
-        // Create test DAG: Node-1 -> Node-2
         WorkflowDagExecutorApplication executor = new WorkflowDagExecutorApplication(2, true);
-        setPrivateField(executor, "executorService", mockExecutor);
+        executor.buildDAG(input);
 
-        Map<Integer, String> nodes = Map.of(1, "Node-1", 2, "Node-2");
-        List<int[]> edges = List.of(new int[]{1, 2});
-        executor.buildDAG(new DagInput(nodes, edges));
+        Map<Integer, CompletableFuture<Void>> futures = new ConcurrentHashMap<>();
+        CountDownLatch latch = new CountDownLatch(1);
 
-        // Run execution
-        List<String> result = executor.execute();
+        // 1. Schedule Node-1 (root) - it should run
+        WorkflowDagExecutorApplication.Node node1 = executor.nodes.get(1);
+        executor.executeNodeAsync(node1, futures, latch);
 
-        // Validate that Node-1 ran, Node-2 did not
-        assertTrue(result.contains("Node-1"));
+        // 2. Simulate failure for Node-2 by inserting a failed future
+        WorkflowDagExecutorApplication.Node node2 = executor.nodes.get(2);
+        CompletableFuture<Void> failedFuture = new CompletableFuture<>();
+        failedFuture.completeExceptionally(new RuntimeException("Simulated failure for Node-2"));
+        futures.put(node2.id, failedFuture);
+
+        // 3. Schedule Node-3 (so it checks its parent Node-2's failed future)
+        WorkflowDagExecutorApplication.Node node3 = executor.nodes.get(3);
+        executor.executeNodeAsync(node3, futures, latch);
+
+        // ----> Wait for Node-1's future to complete
+        futures.get(node1.id).get(2, TimeUnit.SECONDS);
+
+        // Access private executionOrder via reflection
+        List<String> result = getExecutionOrder(executor);
+
+        // Assert: Only Node-1 should be in the execution order
+        assertTrue(result.contains("Node-1"), "Node-1 should be in the execution order");
+        assertFalse(result.contains("Node-2"), "Node-2 should NOT be in the execution order (failed node)");
+        assertFalse(result.contains("Node-3"), "Node-3 should NOT be in the execution order (child of failed node)");
+        assertEquals(1, result.size(), "Only Node-1 should have completed");
     }
 
-    // Simple reflection helper to inject mock into private final field
-    private void setPrivateField(Object target, String fieldName, Object value) {
-        try {
-            var field = target.getClass().getDeclaredField(fieldName);
-            field.setAccessible(true);
-            field.set(target, value);
-        } catch (Exception e) {
-            throw new RuntimeException("Failed to set field: " + fieldName, e);
-        }
+    // Helper to get private executionOrder list via reflection
+    @SuppressWarnings("unchecked")
+    private List<String> getExecutionOrder(WorkflowDagExecutorApplication executor) throws Exception {
+        Field f = WorkflowDagExecutorApplication.class.getDeclaredField("executionOrder");
+        f.setAccessible(true);
+        return (List<String>) f.get(executor);
     }
+
 
     @Test
     void execute_WithHighConcurrency_CompletesSuccessfully() throws Exception {
