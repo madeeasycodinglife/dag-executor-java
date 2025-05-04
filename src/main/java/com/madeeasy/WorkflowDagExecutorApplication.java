@@ -362,7 +362,8 @@ public class WorkflowDagExecutorApplication {
                             Thread.currentThread().getName(),
                             node.name,
                             ex.getMessage());
-                    if (latchReleased.compareAndSet(false, true)) {
+                    // Only release latch if ALL nodes failed
+                    if (completedNodes.isEmpty() && latchReleased.compareAndSet(false, true)) {
                         completionLatch.countDown();
                     }
                     return null;
@@ -396,17 +397,25 @@ public class WorkflowDagExecutorApplication {
                     CompletableFuture<Void> parentFuture = futures.get(parent.id);
 
                     // Step 3: Optional logging when parent completes
-                    parentFuture.thenRunAsync(() -> {
-                        if (enableLogging) {
-                            System.out.printf(
-                                    "[%s] 🔚 [%s] Parent %s (ID: %d) future completed%n",
-                                    Thread.currentThread().getName(),
-                                    LocalTime.now(),
-                                    parent.name,
-                                    parent.id
-                            );
-                        }
-                    }, executorService);
+                    parentFuture
+                            .thenRunAsync(() -> {
+                                if (enableLogging) {
+                                    System.out.printf(
+                                            "[%s] 🔚 [%s] Parent %s (ID: %d) future completed%n",
+                                            Thread.currentThread().getName(),
+                                            LocalTime.now(),
+                                            parent.name,
+                                            parent.id
+                                    );
+                                }
+                            }, executorService)
+                            .exceptionally(ex -> {
+                                // Mark child nodes as failed if parent fails
+                                node.children.forEach(child ->
+                                        futures.get(child.id).completeExceptionally(ex)
+                                );
+                                return null;
+                            });
 
                     return parentFuture;
                 })
