@@ -160,7 +160,7 @@ public class WorkflowDagExecutorApplication {
      *
      * @return true if the graph is a DAG, false otherwise
      */
-    private boolean isDAG() {
+    boolean isDAG() {
         Set<Node> visited = new HashSet<>();      // Tracks all visited nodes
         Set<Node> recursionStack = new HashSet<>(); // Tracks nodes in current recursion path
 
@@ -177,7 +177,7 @@ public class WorkflowDagExecutorApplication {
      * Performs DFS to check if a cycle exists starting from the given node.
      * Tracks recursion path to detect back edges.
      */
-    private boolean hasCycle(Node node, Set<Node> visited, Set<Node> recursionStack) {
+    boolean hasCycle(Node node, Set<Node> visited, Set<Node> recursionStack) {
         visited.add(node);
         recursionStack.add(node);
 
@@ -254,9 +254,9 @@ public class WorkflowDagExecutorApplication {
      * Schedules a node for execution only after all its parent nodes have completed.
      * Uses CompletableFuture to manage asynchronous dependencies and avoid duplicates.
      */
-    private void executeNodeAsync(Node node,
-                                  Map<Integer, CompletableFuture<Void>> futures,
-                                  CountDownLatch completionLatch) {
+    void executeNodeAsync(Node node,
+                          Map<Integer, CompletableFuture<Void>> futures,
+                          CountDownLatch completionLatch) {
 
         // Already scheduled? Skip
         if (futures.containsKey(node.id)) {
